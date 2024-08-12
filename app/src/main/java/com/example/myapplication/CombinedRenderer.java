@@ -39,9 +39,6 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
     private int pointCloudVertexBufferId;
     private int uModelViewProjectionHandle;
     private int pointCloudPositionHandle;
-    private int pointCloudColorHandle;
-    private float[] modelViewProjectionMatrix = new float[16];
-    private long lastPointCloudTimestamp = 0;
 
 
     private final float[] vertices = {
@@ -67,17 +64,31 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
     public void setSession(Session session) {
         this.session = session;
         if (session != null) {
-            session.setCameraTextureName(getTextureId());
-            Log.i(TAG, "Camera texture name set: " + getTextureId());
+            if (textureId != 0) {
+                session.setCameraTextureName(textureId);
+                Log.i(TAG, "Camera texture name set: " + textureId);
+            } else {
+                Log.e(TAG, "Invalid texture ID. Cannot set camera texture name.");
+            }
         }
     }
 
     @Override
     public void onSurfaceCreated(GL10 gl, EGLConfig config) {
-        initCameraFeed();
+        int[] textures = new int[1];
+        GLES32.glGenTextures(1, textures, 0);
+        textureId = textures[0];
+
+        if (textureId == 0) {
+            Log.e(TAG, "Failed to generate a valid texture ID.");
+        } else {
+            Log.i(TAG, "Generated texture ID: " + textureId);
+        }
+
+        initCameraFeed(textureId);
         initPointCloud();
 
-        if (session != null) {
+        if (session != null && textureId != 0) {
             session.setCameraTextureName(textureId);
             Log.i(TAG, "Camera texture name set: " + textureId);
         }
@@ -92,7 +103,18 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         GLES32.glViewport(0, 0, width, height);
     }
 
-    private void initCameraFeed() {
+    private void initCameraFeed(int textureId) {
+        if (textureId == 0) {
+            Log.e(TAG, "Invalid texture ID in initCameraFeed.");
+            return;
+        }
+
+        GLES32.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId);
+        GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR);
+        GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR);
+
+        Log.i(TAG, "Camera feed texture initialized with ID: " + textureId);
+
         String vertexShaderCode =
                 "attribute vec4 vPosition;" +
                         "attribute vec2 vTexCoord;" +
@@ -117,13 +139,6 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         cameraTextureCoordHandle = GLES32.glGetAttribLocation(shaderProgram.getProgramId(), "vTexCoord");
         cameraTextureHandle = GLES32.glGetUniformLocation(shaderProgram.getProgramId(), "sTexture");
 
-        int[] textures = new int[1];
-        GLES32.glGenTextures(1, textures, 0);
-        textureId = textures[0];
-        GLES32.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId);
-        GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR);
-        GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR);
-
         Log.i(TAG, "Camera feed rendering initialized successfully.");
     }
 
@@ -145,20 +160,6 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
                         "}";
 
         pointCloudShaderProgram = new ShaderProgram(pointCloudVertexShaderCode, pointCloudFragmentShaderCode);
-
-        // Verify shader program compilation and linking
-        int[] linkStatus = new int[1];
-        GLES32.glGetProgramiv(pointCloudShaderProgram.getProgramId(), GLES32.GL_LINK_STATUS, linkStatus, 0);
-        if (linkStatus[0] == GLES32.GL_FALSE) {
-            Log.e(TAG, "Error linking shader program: " + GLES32.glGetProgramInfoLog(pointCloudShaderProgram.getProgramId()));
-            return; // Exit the method if linking failed
-        }
-
-        // Check if the shader program ID is valid
-        if (pointCloudShaderProgram.getProgramId() == 0) {
-            Log.e(TAG, "Invalid shader program ID.");
-            return; // Exit the method if the program ID is invalid
-        }
 
         uModelViewProjectionHandle = GLES32.glGetUniformLocation(pointCloudShaderProgram.getProgramId(), "u_ModelViewProjection");
         int uPointSizeHandle = GLES32.glGetUniformLocation(pointCloudShaderProgram.getProgramId(), "u_PointSize");
@@ -185,9 +186,13 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
             return;
         }
         try {
+            GLES32.glEnable(GLES32.GL_BLEND);
+            GLES32.glBlendFunc(GLES32.GL_SRC_ALPHA, GLES32.GL_ONE_MINUS_SRC_ALPHA);
+
             GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT | GLES32.GL_DEPTH_BUFFER_BIT);
 
             Frame frame = session.update();
+
             renderCameraFeed(frame);
             renderPointCloud(frame);
 
@@ -204,14 +209,13 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         // Enable vertex and texture coordinate arrays
         GLES32.glEnableVertexAttribArray(cameraPositionHandle);
         GLES32.glVertexAttribPointer(cameraPositionHandle, 3, GLES32.GL_FLOAT, false, 0, vertexBuffer.getBuffer());
-
         GLES32.glEnableVertexAttribArray(cameraTextureCoordHandle);
         GLES32.glVertexAttribPointer(cameraTextureCoordHandle, 2, GLES32.GL_FLOAT, false, 0, textureBuffer.getBuffer());
 
         // Set the active texture and bind it
-        GLES32.glUniform1i(cameraTextureHandle, 0);
         GLES32.glActiveTexture(GLES32.GL_TEXTURE0);
         GLES32.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId);
+        GLES32.glUniform1i(cameraTextureHandle, 0);
 
         // Draw the texture on the rectangle
         GLES32.glDrawArrays(GLES32.GL_TRIANGLE_STRIP, 0, 4);
@@ -219,6 +223,7 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         // Disable vertex and texture coordinate arrays
         GLES32.glDisableVertexAttribArray(cameraPositionHandle);
         GLES32.glDisableVertexAttribArray(cameraTextureCoordHandle);
+        GLES32.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0);
     }
 
     private void renderPointCloud(Frame frame) {
@@ -234,13 +239,11 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
             Log.i(TAG, "Number of Feature Points: " + numPoints);
 
             if (numPoints > 0) {
+                // Use the shader program for the point cloud
                 GLES32.glUseProgram(pointCloudShaderProgram.getProgramId());
-                int programError = GLES32.glGetError();
-                Log.i(TAG, "Program Use Error: " + programError);
 
+                // Bind the vertex buffer for the point cloud
                 GLES32.glBindBuffer(GLES32.GL_ARRAY_BUFFER, pointCloudVertexBufferId);
-                int bufferError = GLES32.glGetError();
-                Log.i(TAG, "Buffer Bind Error: " + bufferError);
 
                 ByteBuffer byteBuffer = ByteBuffer.allocateDirect(totalFloats * Float.BYTES);
                 byteBuffer.order(ByteOrder.nativeOrder());
@@ -248,32 +251,34 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
                 directFloatBuffer.put(pointCloudBuffer);
                 directFloatBuffer.position(0);
 
+                // Upload point cloud data to the GPU
                 GLES32.glBufferData(GLES32.GL_ARRAY_BUFFER, totalFloats * Float.BYTES, directFloatBuffer, GLES32.GL_DYNAMIC_DRAW);
-                int bufferDataError = GLES32.glGetError();
-                Log.i(TAG, "Buffer Data Error: " + bufferDataError);
 
-                // Set the u_ModelViewProjection uniform
+                // Set the model view projection matrix
                 float[] modelViewProjectionMatrix = new float[16];
                 getModelViewProjectionMatrix(frame, modelViewProjectionMatrix);
                 GLES32.glUniformMatrix4fv(uModelViewProjectionHandle, 1, false, modelViewProjectionMatrix, 0);
 
-                // Set the u_PointSize and u_Color uniforms
+                // Set the point size and color for rendering
                 GLES32.glUniform1f(GLES32.glGetUniformLocation(pointCloudShaderProgram.getProgramId(), "u_PointSize"), 5.0f); // Example size
                 GLES32.glUniform4f(GLES32.glGetUniformLocation(pointCloudShaderProgram.getProgramId(), "u_Color"), 1.0f, 0.0f, 0.0f, 1.0f); // Example color: red
 
+                // Specify how the point cloud data is interpreted
                 GLES32.glVertexAttribPointer(pointCloudPositionHandle, 3, GLES32.GL_FLOAT, false, floatsPerPoint * Float.BYTES, 0);
                 GLES32.glEnableVertexAttribArray(pointCloudPositionHandle);
 
+                // Draw the point cloud
                 GLES32.glDrawArrays(GLES32.GL_POINTS, 0, numPoints);
-                int drawError = GLES32.glGetError();
-                Log.i(TAG, "Draw Error: " + drawError);
 
+                // Disable the vertex attribute array
                 GLES32.glDisableVertexAttribArray(pointCloudPositionHandle);
-
+                GLES32.glBindBuffer(GLES32.GL_ARRAY_BUFFER, 0);
+                GLES32.glUseProgram(0);  // Unbind the shader program
             } else {
                 Log.w(TAG, "Point cloud is empty, skipping rendering.");
             }
 
+            // Release the point cloud to free up resources
             pointCloud.release();
         } catch (Exception e) {
             Log.e(TAG, "Exception in renderPointCloud: " + e.getMessage());
@@ -319,3 +324,4 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         return textureId;
     }
 }
+
