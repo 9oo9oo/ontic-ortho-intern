@@ -1,5 +1,6 @@
 package com.example.myapplication;
 
+import android.content.Context;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES32;
 import android.opengl.GLSurfaceView;
@@ -10,16 +11,17 @@ import com.google.ar.core.Frame;
 import com.google.ar.core.PointCloud;
 import com.google.ar.core.Session;
 import com.google.ar.core.Camera;
-import com.google.ar.core.exceptions.CameraNotAvailableException;
+import com.google.ar.core.exceptions.NotYetAvailableException;
 
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
-import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
-import java.util.Arrays;
+import java.nio.ShortBuffer;
+
+import android.media.Image;
 
 public class CombinedRenderer implements GLSurfaceView.Renderer {
 
@@ -40,6 +42,8 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
     private int uModelViewProjectionHandle;
     private int pointCloudPositionHandle;
 
+    private static final float MIN_DEPTH = 0.2f; // Minimum depth in meters
+    private static final float MAX_DEPTH = 5.0f; // Maximum depth in meters
 
     private final float[] vertices = {
             -1.0f, -1.0f, 0.0f,
@@ -87,7 +91,6 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
 
         initCameraFeed(textureId);
         initPointCloud();
-
         if (session != null && textureId != 0) {
             session.setCameraTextureName(textureId);
             Log.i(TAG, "Camera texture name set: " + textureId);
@@ -193,8 +196,19 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
 
             Frame frame = session.update();
 
+            Image depthImage = null;
+            try {
+                depthImage = frame.acquireDepthImage16Bits();
+            } catch (NotYetAvailableException e) {
+                Log.w(TAG, "Depth image is not available yet.");
+            }
+
             renderCameraFeed(frame);
-            renderPointCloud(frame);
+            renderPointCloud(frame, depthImage);
+
+            if (depthImage != null) {
+                depthImage.close();
+            }
 
             Log.i(TAG, "Frame drawn successfully");
         } catch (Exception e) {
@@ -208,9 +222,9 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
 
         // Enable vertex and texture coordinate arrays
         GLES32.glEnableVertexAttribArray(cameraPositionHandle);
-        GLES32.glVertexAttribPointer(cameraPositionHandle, 3, GLES32.GL_FLOAT, false, 0, vertexBuffer.getBuffer());
+        GLES32.glVertexAttribPointer(cameraPositionHandle, 3, GLES32.GL_FLOAT, false, 0, vertexBuffer.getFloatBuffer());
         GLES32.glEnableVertexAttribArray(cameraTextureCoordHandle);
-        GLES32.glVertexAttribPointer(cameraTextureCoordHandle, 2, GLES32.GL_FLOAT, false, 0, textureBuffer.getBuffer());
+        GLES32.glVertexAttribPointer(cameraTextureCoordHandle, 2, GLES32.GL_FLOAT, false, 0, textureBuffer.getFloatBuffer());
 
         // Set the active texture and bind it
         GLES32.glActiveTexture(GLES32.GL_TEXTURE0);
@@ -226,7 +240,7 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         GLES32.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, 0);
     }
 
-    private void renderPointCloud(Frame frame) {
+    private void renderPointCloud(Frame frame, Image depthImage) {
         try {
             PointCloud pointCloud = frame.acquirePointCloud();
             pointCloudBuffer = pointCloud.getPoints();
@@ -250,6 +264,11 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
                 FloatBuffer directFloatBuffer = byteBuffer.asFloatBuffer();
                 directFloatBuffer.put(pointCloudBuffer);
                 directFloatBuffer.position(0);
+
+                // Filter points by depth
+                if (depthImage != null) {
+                    filterFeaturePointsByDepth(directFloatBuffer, depthImage, numPoints, floatsPerPoint);
+                }
 
                 // Upload point cloud data to the GPU
                 GLES32.glBufferData(GLES32.GL_ARRAY_BUFFER, totalFloats * Float.BYTES, directFloatBuffer, GLES32.GL_DYNAMIC_DRAW);
@@ -282,6 +301,36 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
             pointCloud.release();
         } catch (Exception e) {
             Log.e(TAG, "Exception in renderPointCloud: " + e.getMessage());
+        }
+    }
+
+    private void filterFeaturePointsByDepth(FloatBuffer pointCloudBuffer, Image depthImage, int numPoints, int floatsPerPoint) {
+        ShortBuffer depthBuffer = depthImage.getPlanes()[0].getBuffer().asShortBuffer();
+        int depthWidth = depthImage.getWidth();
+        int depthHeight = depthImage.getHeight();
+
+        for (int i = 0; i < numPoints; i++) {
+            float x = pointCloudBuffer.get(i * floatsPerPoint);
+            float y = pointCloudBuffer.get(i * floatsPerPoint + 1);
+            float z = pointCloudBuffer.get(i * floatsPerPoint + 2);
+
+            // Map the 3D point to 2D depth image coordinates
+            int depthX = (int) ((x / z) * depthWidth / 2.0f + depthWidth / 2.0f);
+            int depthY = (int) ((y / z) * depthHeight / 2.0f + depthHeight / 2.0f);
+
+            if (depthX < 0 || depthX >= depthWidth || depthY < 0 || depthY >= depthHeight) {
+                continue; // Skip points that fall outside the depth image bounds
+            }
+
+            int depthIndex = depthY * depthWidth + depthX;
+            float depthValue = (depthBuffer.get(depthIndex) & 0xFFFF) / 1000.0f; // Depth value in meters
+
+            if (depthValue < MIN_DEPTH || depthValue > MAX_DEPTH) {
+                // Zero out the coordinates to effectively remove the point
+                pointCloudBuffer.put(i * floatsPerPoint, 0);
+                pointCloudBuffer.put(i * floatsPerPoint + 1, 0);
+                pointCloudBuffer.put(i * floatsPerPoint + 2, 0);
+            }
         }
     }
 

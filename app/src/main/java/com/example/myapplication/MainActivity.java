@@ -2,6 +2,7 @@ package com.example.myapplication;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Context;
 import android.content.pm.PackageManager;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
@@ -13,12 +14,20 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.ar.core.ArCoreApk;
+import com.google.ar.core.CameraConfig;
+import com.google.ar.core.CameraConfigFilter;
 import com.google.ar.core.Session;
 import com.google.ar.core.exceptions.CameraNotAvailableException;
 import com.google.ar.core.exceptions.UnavailableException;
 import com.google.ar.core.Config;
-import com.google.ar.core.Config.FocusMode;
-import com.google.ar.core.Config.DepthMode;
+
+import java.util.EnumSet;
+import java.util.List;
+
+import android.hardware.camera2.CameraAccessException;
+import android.hardware.camera2.CameraCharacteristics;
+import android.hardware.camera2.CameraManager;
+
 
 public class MainActivity extends Activity {
 
@@ -43,7 +52,6 @@ public class MainActivity extends Activity {
         glSurfaceView.setRenderer(renderer);
         glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
 
-        // Request camera permission
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PERMISSION);
         } else {
@@ -57,18 +65,20 @@ public class MainActivity extends Activity {
                 switch (ArCoreApk.getInstance().requestInstall(this, userRequestedInstall)) {
                     case INSTALLED:
                         arSession = new Session(this);
+
                         Config config = new Config(arSession);
-                        config.setFocusMode(Config.FocusMode.AUTO);  // Enable auto-focus mode
+                        config.setFocusMode(Config.FocusMode.AUTO );  // Enable auto-focus mode
                         config.setDepthMode(Config.DepthMode.AUTOMATIC);  // Enable depth mode
+                        config.setLightEstimationMode(Config.LightEstimationMode.ENVIRONMENTAL_HDR);
                         config.setUpdateMode(Config.UpdateMode.LATEST_CAMERA_IMAGE);
                         arSession.configure(config);
+
                         renderer.setSession(arSession);
-                        Log.i(TAG, "ARCore session initialized successfully with auto-focus.");
+                        Log.i(TAG, "ARCore session initialized successfully.");
                         break;
                     case INSTALL_REQUESTED:
                         userRequestedInstall = false;
                         Log.i(TAG, "ARCore installation requested.");
-                        // Exit initialization until ARCore is installed.
                 }
             }
         } catch (UnavailableException e) {
