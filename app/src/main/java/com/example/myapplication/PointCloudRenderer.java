@@ -87,7 +87,6 @@ public class PointCloudRenderer {
                 float[] modelViewProjectionMatrix = getModelViewProjectionMatrix(frame);
                 GLES32.glUniformMatrix4fv(uModelViewProjectionHandle, 1, false, modelViewProjectionMatrix, 0);
 
-
                 // Set the point size and color for rendering
                 GLES32.glUniform1f(GLES32.glGetUniformLocation(pointCloudShaderProgram.getProgramId(), "u_PointSize"), 5.0f); // Example size
                 GLES32.glUniform4f(GLES32.glGetUniformLocation(pointCloudShaderProgram.getProgramId(), "u_Color"), 1.0f, 0.0f, 0.0f, 1.0f); // Example color: red
@@ -115,7 +114,6 @@ public class PointCloudRenderer {
     }
 
     private float[] getModelViewProjectionMatrix(Frame frame) {
-        // Code to compute the Model-View-Projection matrix
         float[] modelViewProjectionMatrix = new float[16];
         MatrixHelper.getModelViewProjectionMatrix(frame, modelViewProjectionMatrix);
         return modelViewProjectionMatrix;
