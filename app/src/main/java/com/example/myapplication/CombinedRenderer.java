@@ -1,6 +1,5 @@
 package com.example.myapplication;
 
-import android.content.Context;
 import android.opengl.GLES11Ext;
 import android.opengl.GLES32;
 import android.opengl.GLSurfaceView;
@@ -8,6 +7,7 @@ import android.opengl.Matrix;
 import android.util.Log;
 
 import com.google.ar.core.Frame;
+import com.google.ar.core.ImageFormat;
 import com.google.ar.core.PointCloud;
 import com.google.ar.core.Session;
 import com.google.ar.core.Camera;
@@ -20,13 +20,25 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
+import java.util.ArrayList;
+import java.util.List;
 
 import android.media.Image;
+
+import org.opencv.core.CvType;
+import org.opencv.core.KeyPoint;
+import org.opencv.core.Mat;
+import org.opencv.core.MatOfKeyPoint;
+import org.opencv.core.Point;
+import org.opencv.core.Size;
+import org.opencv.features2d.ORB;
+import org.opencv.imgproc.Imgproc;
 
 public class CombinedRenderer implements GLSurfaceView.Renderer {
 
     private static final String TAG = "CombinedRenderer";
     private Session session;
+
     private final Buffer vertexBuffer;
     private final Buffer textureBuffer;
 
@@ -41,6 +53,8 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
     private int pointCloudVertexBufferId;
     private int uModelViewProjectionHandle;
     private int pointCloudPositionHandle;
+
+    private List<Point> opencvFeaturePoints = new ArrayList<>();
 
     private static final float MIN_DEPTH = 0.2f; // Minimum depth in meters
     private static final float MAX_DEPTH = 5.0f; // Maximum depth in meters
@@ -115,6 +129,8 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         GLES32.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, textureId);
         GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_MIN_FILTER, GLES32.GL_LINEAR);
         GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_MAG_FILTER, GLES32.GL_LINEAR);
+        GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_WRAP_S, GLES32.GL_CLAMP_TO_EDGE);
+        GLES32.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES32.GL_TEXTURE_WRAP_T, GLES32.GL_CLAMP_TO_EDGE);
 
         Log.i(TAG, "Camera feed texture initialized with ID: " + textureId);
 
@@ -191,29 +207,121 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         try {
             GLES32.glEnable(GLES32.GL_BLEND);
             GLES32.glBlendFunc(GLES32.GL_SRC_ALPHA, GLES32.GL_ONE_MINUS_SRC_ALPHA);
-
             GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT | GLES32.GL_DEPTH_BUFFER_BIT);
 
             Frame frame = session.update();
+            Image cameraImage = null;
 
-            Image depthImage = null;
+            int imageWidth = 0;
+            int imageHeight = 0;
             try {
-                depthImage = frame.acquireDepthImage16Bits();
+                cameraImage = frame.acquireCameraImage();
+                imageWidth = cameraImage.getWidth();
+                imageHeight = cameraImage.getHeight();
+                Mat matImage = convertImageToMat(cameraImage);
+                processWithOpenCV(matImage);
+                cameraImage.close();
             } catch (NotYetAvailableException e) {
-                Log.w(TAG, "Depth image is not available yet.");
+                Log.w(TAG, "Camera image not yet available.");
             }
 
+            // Render the ARCore point cloud
             renderCameraFeed(frame);
-            renderPointCloud(frame, depthImage);
+            renderPointCloud(frame, null);
 
-            if (depthImage != null) {
-                depthImage.close();
-            }
+            // Render OpenCV feature points
+            renderOpenCVFeaturePoints(imageWidth, imageHeight);
 
             Log.i(TAG, "Frame drawn successfully");
         } catch (Exception e) {
             Log.e(TAG, "Exception in onDrawFrame: " + e.getMessage());
         }
+    }
+
+    private void renderOpenCVFeaturePoints(int imageWidth, int imageHeight) {
+        GLES32.glUseProgram(shaderProgram.getProgramId());
+        GLES32.glUniform1f(GLES32.glGetUniformLocation(shaderProgram.getProgramId(), "u_PointSize"), 5.0f); // Adjust point size as needed
+
+        for (Point point : opencvFeaturePoints) {
+            float[] glCoords = convertToOpenGLCoordinates(point, imageWidth, imageHeight);
+
+            FloatBuffer vertexBuffer = ByteBuffer.allocateDirect(glCoords.length * Float.BYTES)
+                    .order(ByteOrder.nativeOrder())
+                    .asFloatBuffer();
+            vertexBuffer.put(glCoords).position(0); // Add the coordinates and reset the buffer position
+
+            GLES32.glEnableVertexAttribArray(cameraPositionHandle);
+            GLES32.glVertexAttribPointer(cameraPositionHandle, 2, GLES32.GL_FLOAT, false, 0, vertexBuffer);
+
+            GLES32.glUniform4f(GLES32.glGetUniformLocation(shaderProgram.getProgramId(), "u_Color"), 0.0f, 0.0f, 1.0f, 1.0f); // Blue
+
+            GLES32.glDrawArrays(GLES32.GL_POINTS, 0, 1);
+            GLES32.glDisableVertexAttribArray(cameraPositionHandle);
+        }
+
+        GLES32.glUseProgram(0);
+    }
+
+    private Mat convertImageToMat(Image image) {
+        // Ensure the Image format is YUV_420_888
+        if (image.getFormat() != ImageFormat.YUV_420_888) {
+            throw new IllegalArgumentException("Expected image in YUV_420_888 format");
+        }
+
+        // Extract Y, U, V planes
+        Image.Plane[] planes = image.getPlanes();
+        ByteBuffer yBuffer = planes[0].getBuffer();
+        ByteBuffer uBuffer = planes[1].getBuffer();
+        ByteBuffer vBuffer = planes[2].getBuffer();
+
+        int ySize = yBuffer.remaining();
+        int uSize = uBuffer.remaining();
+        int vSize = vBuffer.remaining();
+
+        // Prepare byte array
+        byte[] nv21Bytes = new byte[ySize + uSize + vSize];
+
+        // Fill byte array with data from Y, U, and V planes
+        yBuffer.get(nv21Bytes, 0, ySize);
+        vBuffer.get(nv21Bytes, ySize, vSize); // V before U
+        uBuffer.get(nv21Bytes, ySize + vSize, uSize);
+
+        // Convert NV21 to Mat
+        Mat yuvMat = new Mat(image.getHeight() + image.getHeight() / 2, image.getWidth(), CvType.CV_8UC1);
+        yuvMat.put(0, 0, nv21Bytes);
+
+        // Convert YUV to RGB
+        Mat rgbMat = new Mat();
+        Imgproc.cvtColor(yuvMat, rgbMat, Imgproc.COLOR_YUV2RGB_NV21);
+
+        return rgbMat;
+    }
+
+    private void processWithOpenCV(Mat matImage) {
+        // Apply Gaussian Blur to reduce noise
+        Imgproc.GaussianBlur(matImage, matImage, new Size(5, 5), 0);
+
+        // Detect ORB features
+        MatOfKeyPoint keyPoints = new MatOfKeyPoint();
+        ORB orbDetector = ORB.create(1000);
+        orbDetector.detect(matImage, keyPoints);
+
+        // Clear previous points
+        opencvFeaturePoints.clear();
+
+        // Convert keypoints to a list of OpenCV Points
+        for (KeyPoint kp : keyPoints.toArray()) {
+            opencvFeaturePoints.add(new Point(kp.pt.x, kp.pt.y));
+        }
+        KeyPoint[] keypointArray = keyPoints.toArray();
+        Log.i(TAG, "Number of detected OpenCV keypoints: " + keypointArray.length);
+    }
+
+    private float[] convertToOpenGLCoordinates(Point point, int imageWidth, int imageHeight) {
+        float x = (float) ((point.x / imageWidth) * 2.0 - 1.0); // Normalize x to [-1, 1]
+        float y = (float) (1.0 - (point.y / imageHeight) * 2.0); // Normalize y to [-1, 1] and invert y
+
+        return new float[]{x, y};
     }
 
     private void renderCameraFeed(Frame frame) {
@@ -253,10 +361,7 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
             Log.i(TAG, "Number of Feature Points: " + numPoints);
 
             if (numPoints > 0) {
-                // Use the shader program for the point cloud
                 GLES32.glUseProgram(pointCloudShaderProgram.getProgramId());
-
-                // Bind the vertex buffer for the point cloud
                 GLES32.glBindBuffer(GLES32.GL_ARRAY_BUFFER, pointCloudVertexBufferId);
 
                 ByteBuffer byteBuffer = ByteBuffer.allocateDirect(totalFloats * Float.BYTES);
@@ -265,10 +370,10 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
                 directFloatBuffer.put(pointCloudBuffer);
                 directFloatBuffer.position(0);
 
-                // Filter points by depth
-                if (depthImage != null) {
-                    filterFeaturePointsByDepth(directFloatBuffer, depthImage, numPoints, floatsPerPoint);
-                }
+                 // Filter points by depth
+//                if (depthImage != null) {
+//                    filterFeaturePointsByDepth(directFloatBuffer, depthImage, numPoints, floatsPerPoint);
+//                }
 
                 // Upload point cloud data to the GPU
                 GLES32.glBufferData(GLES32.GL_ARRAY_BUFFER, totalFloats * Float.BYTES, directFloatBuffer, GLES32.GL_DYNAMIC_DRAW);
@@ -309,6 +414,8 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         int depthWidth = depthImage.getWidth();
         int depthHeight = depthImage.getHeight();
 
+        int validPoints = 0;
+
         for (int i = 0; i < numPoints; i++) {
             float x = pointCloudBuffer.get(i * floatsPerPoint);
             float y = pointCloudBuffer.get(i * floatsPerPoint + 1);
@@ -325,13 +432,17 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
             int depthIndex = depthY * depthWidth + depthX;
             float depthValue = (depthBuffer.get(depthIndex) & 0xFFFF) / 1000.0f; // Depth value in meters
 
-            if (depthValue < MIN_DEPTH || depthValue > MAX_DEPTH) {
+            if (depthValue >= MIN_DEPTH && depthValue <= MAX_DEPTH) {
+                validPoints++;
+            } else {
                 // Zero out the coordinates to effectively remove the point
                 pointCloudBuffer.put(i * floatsPerPoint, 0);
                 pointCloudBuffer.put(i * floatsPerPoint + 1, 0);
                 pointCloudBuffer.put(i * floatsPerPoint + 2, 0);
             }
         }
+
+        Log.i(TAG, "Number of valid feature points after filtering: " + validPoints);
     }
 
     private void getModelViewProjectionMatrix(Frame frame, float[] modelViewProjectionMatrix) {

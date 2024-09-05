@@ -2,7 +2,6 @@ package com.example.myapplication;
 
 import android.Manifest;
 import android.app.Activity;
-import android.content.Context;
 import android.content.pm.PackageManager;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
@@ -14,19 +13,12 @@ import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 
 import com.google.ar.core.ArCoreApk;
-import com.google.ar.core.CameraConfig;
-import com.google.ar.core.CameraConfigFilter;
 import com.google.ar.core.Session;
 import com.google.ar.core.exceptions.CameraNotAvailableException;
 import com.google.ar.core.exceptions.UnavailableException;
 import com.google.ar.core.Config;
 
-import java.util.EnumSet;
-import java.util.List;
-
-import android.hardware.camera2.CameraAccessException;
-import android.hardware.camera2.CameraCharacteristics;
-import android.hardware.camera2.CameraManager;
+import org.opencv.android.OpenCVLoader;
 
 
 public class MainActivity extends Activity {
@@ -42,6 +34,11 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+        if (!OpenCVLoader.initDebug()) {
+            Log.e(TAG, "OpenCV initialization failed.");
+        } else {
+            Log.i(TAG, "OpenCV initialization succeeded.");
+        }
 
         glSurfaceView = findViewById(R.id.gl_surface_view);
         glSurfaceView.setPreserveEGLContextOnPause(true);
@@ -71,11 +68,12 @@ public class MainActivity extends Activity {
                         config.setDepthMode(Config.DepthMode.AUTOMATIC);  // Enable depth mode
                         config.setLightEstimationMode(Config.LightEstimationMode.ENVIRONMENTAL_HDR);
                         config.setUpdateMode(Config.UpdateMode.LATEST_CAMERA_IMAGE);
-                        arSession.configure(config);
 
+                        arSession.configure(config);
                         renderer.setSession(arSession);
                         Log.i(TAG, "ARCore session initialized successfully.");
                         break;
+
                     case INSTALL_REQUESTED:
                         userRequestedInstall = false;
                         Log.i(TAG, "ARCore installation requested.");
@@ -88,6 +86,7 @@ public class MainActivity extends Activity {
         }
     }
 
+    @Override
     protected void onResume() {
         super.onResume();
         if (arSession != null) {
@@ -97,6 +96,7 @@ public class MainActivity extends Activity {
             } catch (CameraNotAvailableException e) {
                 Toast.makeText(this, "Camera not available. Try restarting the app.", Toast.LENGTH_LONG).show();
                 arSession = null;
+                Log.e(TAG, "Camera not available: " + e.getMessage());
             }
         }
     }
