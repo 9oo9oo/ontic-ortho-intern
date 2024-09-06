@@ -22,15 +22,36 @@ import org.opencv.core.Size;
 import org.opencv.features2d.ORB;
 import org.opencv.imgproc.Imgproc;
 
-public class OpenCVProcessor {
+public class OpenCVRenderer {
     private static final String TAG = "OpenCVProcessor";
     private final List<Point> opencvFeaturePoints;
-    private ShaderProgram shaderProgram;
+    private ShaderProgram featurePointShaderProgram;
     private int cameraPositionHandle;
 
-    public OpenCVProcessor() {
+    public OpenCVRenderer() {
         this.opencvFeaturePoints = new ArrayList<>();
     }
+
+    public void initOpenCV() {
+        // Initialize the feature points shader
+        String pointVertexShaderCode =
+                "attribute vec4 vPosition;" +
+                        "uniform float u_PointSize;" +
+                        "void main() {" +
+                        "  gl_Position = vPosition;" +
+                        "  gl_PointSize = u_PointSize;" +
+                        "}";
+
+        String pointFragmentShaderCode =
+                "precision mediump float;" +
+                        "uniform vec4 u_Color;" +
+                        "void main() {" +
+                        "  gl_FragColor = u_Color;" +
+                        "}";
+
+        featurePointShaderProgram = new ShaderProgram(pointVertexShaderCode, pointFragmentShaderCode);
+    }
+
 
     public  Mat convertImageToMat(Image image) {
         if (image.getFormat() != ImageFormat.YUV_420_888) {
@@ -60,7 +81,7 @@ public class OpenCVProcessor {
         return rgbMat;
     }
 
-    public List<Point> processWithOpenCV(Mat matImage) {
+    public List<Point> processOpenCV(Mat matImage) {
         Imgproc.GaussianBlur(matImage, matImage, new Size(5, 5), 0);
 
         MatOfKeyPoint keyPoints = new MatOfKeyPoint();
@@ -77,45 +98,40 @@ public class OpenCVProcessor {
         return opencvFeaturePoints;
     }
 
-    public void renderOpenCVFeaturePoints(int imageWidth, int imageHeight, ShaderProgram shaderProgram, int cameraPositionHandle) {
-        if (shaderProgram == null || shaderProgram.getProgramId() == 0) {
-            Log.e(TAG, "Invalid ShaderProgram.");
-            return;
+    public void renderOpenCV(int imageWidth, int imageHeight) {
+        GLES32.glUseProgram(featurePointShaderProgram.getProgramId());
+        GLES32.glUniform1f(GLES32.glGetUniformLocation(featurePointShaderProgram.getProgramId(), "u_PointSize"), 5.0f);
+
+        int pointCount = opencvFeaturePoints.size();
+        float[] glCoords = new float[pointCount * 2];
+
+        // Fill the array with converted OpenGL coordinates
+        for (int i = 0; i < pointCount; i++) {
+            float[] coords = convertToOpenGLCoords(opencvFeaturePoints.get(i), imageWidth, imageHeight);
+            glCoords[i * 2] = coords[0];
+            glCoords[i * 2 + 1] = coords[1];
         }
 
-//        this.cameraPositionHandle = cameraPositionHandle;
+        FloatBuffer vertexBuffer = ByteBuffer.allocateDirect(glCoords.length * Float.BYTES)
+                .order(ByteOrder.nativeOrder())
+                .asFloatBuffer();
+        vertexBuffer.put(glCoords).position(0);
 
-        GLES32.glUseProgram(shaderProgram.getProgramId());
-        GLES32.glUniform1f(GLES32.glGetUniformLocation(shaderProgram.getProgramId(), "u_PointSize"), 5.0f); // Adjust point size as needed
+        GLES32.glEnableVertexAttribArray(cameraPositionHandle);
+        GLES32.glVertexAttribPointer(cameraPositionHandle, 2, GLES32.GL_FLOAT, false, 0, vertexBuffer);
 
-        for (Point point : opencvFeaturePoints) {
-            float[] glCoords = convertToOpenGLCoordinates(point, imageWidth, imageHeight);
+        GLES32.glUniform4f(GLES32.glGetUniformLocation(featurePointShaderProgram.getProgramId(), "u_Color"), 0.0f, 0.0f, 1.0f, 1.0f);
 
-            FloatBuffer vertexBuffer = ByteBuffer.allocateDirect(glCoords.length * Float.BYTES)
-                    .order(ByteOrder.nativeOrder())
-                    .asFloatBuffer();
-            vertexBuffer.put(glCoords).position(0); // Add the coordinates and reset the buffer position
-
-            GLES32.glEnableVertexAttribArray(cameraPositionHandle);
-            GLES32.glVertexAttribPointer(cameraPositionHandle, 2, GLES32.GL_FLOAT, false, 0, vertexBuffer);
-
-            GLES32.glUniform4f(GLES32.glGetUniformLocation(shaderProgram.getProgramId(), "u_Color"), 0.0f, 0.0f, 1.0f, 1.0f); // Blue
-
-            GLES32.glDrawArrays(GLES32.GL_POINTS, 0, 1);
-            GLES32.glDisableVertexAttribArray(cameraPositionHandle);
-        }
+        GLES32.glDrawArrays(GLES32.GL_POINTS, 0, pointCount);
+        GLES32.glDisableVertexAttribArray(cameraPositionHandle);
 
         GLES32.glUseProgram(0);
     }
 
-    public float[] convertToOpenGLCoordinates(Point point, int imageWidth, int imageHeight) {
+    public float[] convertToOpenGLCoords(Point point, int imageWidth, int imageHeight) {
         float glX = (float) (point.y / imageHeight) * 2.0f - 1.0f;
         float glY = 1.0f - (float) (point.x / imageWidth) * 2.0f;
 
         return new float[]{-glX, glY};
-    }
-
-    public List<Point> getFeaturePoints() {
-        return opencvFeaturePoints;
     }
 }

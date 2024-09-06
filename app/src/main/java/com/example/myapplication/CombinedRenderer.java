@@ -12,9 +12,6 @@ import com.google.ar.core.exceptions.NotYetAvailableException;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
-import java.nio.FloatBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -38,12 +35,9 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
 
     private ShaderProgram shaderProgram;
     private final PointCloudRenderer pointCloudRenderer;
-    private final OpenCVProcessor openCVProcessor;
+    private final OpenCVRenderer openCVRenderer;
 
-    private ShaderProgram cameraFeedShaderProgram;
-    private ShaderProgram featurePointShaderProgram;
-
-    private final List<Point> opencvFeaturePoints = new ArrayList<>();
+    private final List<Point> openCVFeaturePoints = new ArrayList<>();
 
     public CombinedRenderer() {
         float[] vertices = {
@@ -63,7 +57,7 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         vertexBuffer = new Buffer(vertices);
         textureBuffer = new Buffer(textureCoords);
         pointCloudRenderer = new PointCloudRenderer();
-        openCVProcessor = new OpenCVProcessor();
+        openCVRenderer = new OpenCVRenderer();
     }
 
     public void setSession(Session session) {
@@ -92,7 +86,7 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
 
         initCameraFeed(textureId);
         pointCloudRenderer.initPointCloud();
-        initShaders();
+        openCVRenderer.initOpenCV();
 
         if (session != null && textureId != 0) {
             session.setCameraTextureName(textureId);
@@ -150,26 +144,6 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         Log.i(TAG, "Camera feed rendering initialized successfully.");
     }
 
-    private void initShaders() {
-        // Initialize the feature points shader
-        String pointVertexShaderCode =
-                "attribute vec4 vPosition;" +
-                        "uniform float u_PointSize;" +
-                        "void main() {" +
-                        "  gl_Position = vPosition;" +
-                        "  gl_PointSize = u_PointSize;" +
-                        "}";
-
-        String pointFragmentShaderCode =
-                "precision mediump float;" +
-                        "uniform vec4 u_Color;" +
-                        "void main() {" +
-                        "  gl_FragColor = u_Color;" +
-                        "}";
-
-        featurePointShaderProgram = new ShaderProgram(pointVertexShaderCode, pointFragmentShaderCode);
-    }
-
     @Override
     public void onDrawFrame(GL10 gl) {
         if (session == null) {
@@ -190,12 +164,12 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
                 cameraImage = frame.acquireCameraImage();
                 imageWidth = cameraImage.getWidth();
                 imageHeight = cameraImage.getHeight();
-                Mat matImage = openCVProcessor.convertImageToMat(cameraImage);
+                Mat matImage = openCVRenderer.convertImageToMat(cameraImage);
 
                 // Populate feature points
-                List<Point> detectedPoints = openCVProcessor.processWithOpenCV(matImage);
-                opencvFeaturePoints.clear();  // Clear any previous points
-                opencvFeaturePoints.addAll(detectedPoints);  // Add new points
+                List<Point> detectedPoints = openCVRenderer.processOpenCV(matImage);
+                openCVFeaturePoints.clear();  // Clear any previous points
+                openCVFeaturePoints.addAll(detectedPoints);  // Add new points
 
                 cameraImage.close();
             } catch (NotYetAvailableException e) {
@@ -204,42 +178,12 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
 
             renderCameraFeed(frame);
             pointCloudRenderer.renderPointCloud(frame);
-            renderOpenCVFeaturePoints(imageWidth, imageHeight);
+            openCVRenderer.renderOpenCV(imageWidth, imageHeight);
 
             Log.i(TAG, "Frame drawn successfully");
         } catch (Exception e) {
             Log.e(TAG, "Exception in onDrawFrame: " + e.getMessage());
         }
-    }
-
-    private void renderOpenCVFeaturePoints(int imageWidth, int imageHeight) {
-        GLES32.glUseProgram(featurePointShaderProgram.getProgramId());
-        GLES32.glUniform1f(GLES32.glGetUniformLocation(featurePointShaderProgram.getProgramId(), "u_PointSize"), 5.0f);
-
-        int pointCount = opencvFeaturePoints.size();
-        float[] glCoords = new float[pointCount * 2];
-
-        // Fill the array with converted OpenGL coordinates
-        for (int i = 0; i < pointCount; i++) {
-            float[] coords = openCVProcessor.convertToOpenGLCoordinates(opencvFeaturePoints.get(i), imageWidth, imageHeight);
-            glCoords[i * 2] = coords[0];
-            glCoords[i * 2 + 1] = coords[1];
-        }
-
-        FloatBuffer vertexBuffer = ByteBuffer.allocateDirect(glCoords.length * Float.BYTES)
-                .order(ByteOrder.nativeOrder())
-                .asFloatBuffer();
-        vertexBuffer.put(glCoords).position(0);
-
-        GLES32.glEnableVertexAttribArray(cameraPositionHandle);
-        GLES32.glVertexAttribPointer(cameraPositionHandle, 2, GLES32.GL_FLOAT, false, 0, vertexBuffer);
-
-        GLES32.glUniform4f(GLES32.glGetUniformLocation(featurePointShaderProgram.getProgramId(), "u_Color"), 0.0f, 0.0f, 1.0f, 1.0f);
-
-        GLES32.glDrawArrays(GLES32.GL_POINTS, 0, pointCount);
-        GLES32.glDisableVertexAttribArray(cameraPositionHandle);
-
-        GLES32.glUseProgram(0);
     }
 
     private void renderCameraFeed(Frame frame) {
