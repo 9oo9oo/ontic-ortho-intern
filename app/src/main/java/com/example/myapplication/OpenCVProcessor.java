@@ -60,11 +60,11 @@ public class OpenCVProcessor {
         return rgbMat;
     }
 
-    public void processWithOpenCV(Mat matImage) {
+    public List<Point> processWithOpenCV(Mat matImage) {
         Imgproc.GaussianBlur(matImage, matImage, new Size(5, 5), 0);
 
         MatOfKeyPoint keyPoints = new MatOfKeyPoint();
-        ORB orbDetector = ORB.create(1000);
+        ORB orbDetector = ORB.create(2000);
         orbDetector.detect(matImage, keyPoints);
 
         opencvFeaturePoints.clear();
@@ -74,6 +74,7 @@ public class OpenCVProcessor {
         }
 
         Log.i(TAG, "Number of detected OpenCV keypoints: " + opencvFeaturePoints.size());
+        return opencvFeaturePoints;
     }
 
     public void renderOpenCVFeaturePoints(int imageWidth, int imageHeight, ShaderProgram shaderProgram, int cameraPositionHandle) {
@@ -108,10 +109,10 @@ public class OpenCVProcessor {
     }
 
     public float[] convertToOpenGLCoordinates(Point point, int imageWidth, int imageHeight) {
-        float x = (float) ((point.x / imageWidth) * 2.0 - 1.0); // Normalize x to [-1, 1]
-        float y = (float) (1.0 - (point.y / imageHeight) * 2.0); // Normalize y to [-1, 1] and invert y
+        float glX = (float) (point.y / imageHeight) * 2.0f - 1.0f;
+        float glY = 1.0f - (float) (point.x / imageWidth) * 2.0f;
 
-        return new float[]{x, y};
+        return new float[]{-glX, glY};
     }
 
     public List<Point> getFeaturePoints() {
