@@ -4,6 +4,8 @@ import android.opengl.GLES11Ext;
 import android.opengl.GLES32;
 import android.opengl.GLSurfaceView;
 import android.util.Log;
+import android.util.Pair;
+import android.media.Image;
 
 import com.google.ar.core.Frame;
 import com.google.ar.core.Session;
@@ -12,13 +14,17 @@ import com.google.ar.core.exceptions.NotYetAvailableException;
 import javax.microedition.khronos.egl.EGLConfig;
 import javax.microedition.khronos.opengles.GL10;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
 
-import android.media.Image;
-
+import org.opencv.core.CvType;
 import org.opencv.core.Mat;
+import org.opencv.core.KeyPoint;
+import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
+
 
 public class CombinedRenderer implements GLSurfaceView.Renderer {
 
@@ -34,12 +40,14 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
     private int cameraTextureCoordHandle;
 
     private ShaderProgram shaderProgram;
-    private final PointCloudRenderer pointCloudRenderer;
     private final OpenCVRenderer openCVRenderer;
+    private final CADModelLoader cadModelLoader;
+
+    private boolean computeRequested = false;
 
     private final List<Point> openCVFeaturePoints = new ArrayList<>();
 
-    public CombinedRenderer() {
+    public CombinedRenderer(InputStream cadModelInputStream) {
         float[] vertices = {
                 -1.0f, -1.0f, 0.0f,
                 1.0f, -1.0f, 0.0f,
@@ -56,8 +64,18 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
 
         vertexBuffer = new Buffer(vertices);
         textureBuffer = new Buffer(textureCoords);
-        pointCloudRenderer = new PointCloudRenderer();
         openCVRenderer = new OpenCVRenderer();
+        cadModelLoader = new CADModelLoader();
+
+        try {
+            cadModelLoader.loadAndPrecomputeModel(cadModelInputStream); // Load CAD model from input stream
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to load CAD model: " + e.getMessage());
+        }
+    }
+
+    public void requestCompute() {
+        computeRequested = true; // Set the flag to trigger computation
     }
 
     public void setSession(Session session) {
@@ -85,7 +103,6 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         }
 
         initCameraFeed(textureId);
-        pointCloudRenderer.initPointCloud();
         openCVRenderer.initOpenCV();
 
         if (session != null && textureId != 0) {
@@ -101,6 +118,90 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
             return;
         }
         GLES32.glViewport(0, 0, width, height);
+    }
+
+    @Override
+    public void onDrawFrame(GL10 gl) {
+        if (session == null) {
+            Log.e(TAG, "Session is null in onDrawFrame");
+            return;
+        }
+        try {
+            GLES32.glEnable(GLES32.GL_BLEND);
+            GLES32.glBlendFunc(GLES32.GL_SRC_ALPHA, GLES32.GL_ONE_MINUS_SRC_ALPHA);
+            GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT | GLES32.GL_DEPTH_BUFFER_BIT);
+
+            Frame frame = session.update();
+            Image cameraImage = null;
+            int imageWidth = 0;
+            int imageHeight = 0;
+
+            com.google.ar.core.Camera arCamera = frame.getCamera();
+            float[] intrinsics = new float[4];
+            arCamera.getImageIntrinsics().getFocalLength(intrinsics, 0);
+            float fx = intrinsics[0]; // Focal length in x direction
+            float fy = intrinsics[1]; // Focal length in y direction
+
+            float[] principalPoint = new float[2];
+            arCamera.getImageIntrinsics().getPrincipalPoint(principalPoint, 0);
+            float cx = principalPoint[0]; // Principal point x-coordinate
+            float cy = principalPoint[1]; // Principal point y-coordinate
+
+            Mat cameraMatrix = new Mat(3, 3, CvType.CV_64F);
+            cameraMatrix.put(0, 0, fx);
+            cameraMatrix.put(0, 1, 0); // Ensure skew is zero
+            cameraMatrix.put(0, 2, cx);
+            cameraMatrix.put(1, 0, 0); // Ensure skew is zero
+            cameraMatrix.put(1, 1, fy);
+            cameraMatrix.put(1, 2, cy);
+            cameraMatrix.put(2, 0, 0);
+            cameraMatrix.put(2, 1, 0);
+            cameraMatrix.put(2, 2, 1);
+
+            Mat rvec = Mat.zeros(3, 1, CvType.CV_64F);
+            Mat tvec = Mat.zeros(3, 1, CvType.CV_64F);
+
+            try {
+                cameraImage = frame.acquireCameraImage();
+                imageWidth = cameraImage.getWidth();
+                imageHeight = cameraImage.getHeight();
+                Mat matImage = openCVRenderer.convertImageToMat(cameraImage);
+
+                List<Point> detectedPoints = openCVRenderer.processOpenCV(matImage);
+                openCVFeaturePoints.clear();
+                for (Point p : detectedPoints) {
+                    float x = (float)((p.x - cx) / fx);
+                    float y = (float)((p.y - cy) / fy);
+                    openCVFeaturePoints.add(new Point(x, y));
+                }
+
+//                List<Point3> corresponding3DPoints = cadModelLoader.findCorresponding3DPoints(openCVFeaturePoints, cameraMatrix);
+//                cadModelLoader.estimatePose(openCVFeaturePoints, corresponding3DPoints, cameraMatrix);
+
+                if (computeRequested) {
+                    MatOfPoint2f projectedPoints = cadModelLoader.compute2DProjections(cameraMatrix, rvec, tvec);
+                    List<Pair<Point, Point>> matchedPoints = cadModelLoader.match2DPoints(openCVFeaturePoints, projectedPoints, 5.0); // Threshold = 5 pixels
+                    double matchPercentage = cadModelLoader.calculateMatchPercentage(openCVFeaturePoints, matchedPoints);
+                    Log.i(TAG, "Match Percentage: " + matchPercentage + "%");
+
+                    computeRequested = false; // Reset the flag after computation
+                }
+
+            } catch (NotYetAvailableException e) {
+                Log.w(TAG, "Camera image not yet available.");
+            } finally {
+                if (cameraImage != null) {
+                    cameraImage.close(); // Ensure the camera image is released
+                }
+            }
+
+            renderCameraFeed(frame);
+            openCVRenderer.renderOpenCV(imageWidth, imageHeight);
+
+            Log.i(TAG, "Frame drawn successfully");
+        } catch (Exception e) {
+            Log.e(TAG, "Exception in onDrawFrame: " + e.getMessage());
+        }
     }
 
     private void initCameraFeed(int textureId) {
@@ -142,48 +243,6 @@ public class CombinedRenderer implements GLSurfaceView.Renderer {
         cameraTextureHandle = GLES32.glGetUniformLocation(shaderProgram.getProgramId(), "sTexture");
 
         Log.i(TAG, "Camera feed rendering initialized successfully.");
-    }
-
-    @Override
-    public void onDrawFrame(GL10 gl) {
-        if (session == null) {
-            Log.e(TAG, "Session is null in onDrawFrame");
-            return;
-        }
-        try {
-            GLES32.glEnable(GLES32.GL_BLEND);
-            GLES32.glBlendFunc(GLES32.GL_SRC_ALPHA, GLES32.GL_ONE_MINUS_SRC_ALPHA);
-            GLES32.glClear(GLES32.GL_COLOR_BUFFER_BIT | GLES32.GL_DEPTH_BUFFER_BIT);
-
-            Frame frame = session.update();
-            Image cameraImage = null;
-            int imageWidth = 0;
-            int imageHeight = 0;
-
-            try {
-                cameraImage = frame.acquireCameraImage();
-                imageWidth = cameraImage.getWidth();
-                imageHeight = cameraImage.getHeight();
-                Mat matImage = openCVRenderer.convertImageToMat(cameraImage);
-
-                // Populate feature points
-                List<Point> detectedPoints = openCVRenderer.processOpenCV(matImage);
-                openCVFeaturePoints.clear();  // Clear any previous points
-                openCVFeaturePoints.addAll(detectedPoints);  // Add new points
-
-                cameraImage.close();
-            } catch (NotYetAvailableException e) {
-                Log.w(TAG, "Camera image not yet available.");
-            }
-
-            renderCameraFeed(frame);
-            pointCloudRenderer.renderPointCloud(frame);
-            openCVRenderer.renderOpenCV(imageWidth, imageHeight);
-
-            Log.i(TAG, "Frame drawn successfully");
-        } catch (Exception e) {
-            Log.e(TAG, "Exception in onDrawFrame: " + e.getMessage());
-        }
     }
 
     private void renderCameraFeed(Frame frame) {

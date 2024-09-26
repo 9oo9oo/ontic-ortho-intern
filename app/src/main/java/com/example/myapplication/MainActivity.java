@@ -6,6 +6,8 @@ import android.content.pm.PackageManager;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.util.Log;
+import android.view.View;
+import android.widget.Button;
 import android.widget.Toast;
 
 import androidx.annotation.NonNull;
@@ -19,6 +21,11 @@ import com.google.ar.core.exceptions.UnavailableException;
 import com.google.ar.core.Config;
 
 import org.opencv.android.OpenCVLoader;
+import org.opencv.core.Point3;
+
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.List;
 
 
 public class MainActivity extends Activity {
@@ -34,6 +41,7 @@ public class MainActivity extends Activity {
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
+
         if (!OpenCVLoader.initDebug()) {
             Log.e(TAG, "OpenCV initialization failed.");
         } else {
@@ -45,15 +53,26 @@ public class MainActivity extends Activity {
         glSurfaceView.setEGLContextClientVersion(2);
         glSurfaceView.setEGLConfigChooser(8, 8, 8, 8, 16, 0);
 
-        renderer = new CombinedRenderer();
+        InputStream cadModelInputStream = getResources().openRawResource(R.raw.model);
+        renderer = new CombinedRenderer(cadModelInputStream);
         glSurfaceView.setRenderer(renderer);
         glSurfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
+
+        Button computeButton = findViewById(R.id.compute_button);
+        computeButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View v) {
+                renderer.requestCompute();
+            }
+        });
 
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
             ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PERMISSION);
         } else {
             initializeARCore();
         }
+
+        loadCADModel();
     }
 
     private void initializeARCore() {
@@ -83,6 +102,29 @@ public class MainActivity extends Activity {
             Log.e(TAG, "ARCore is not available", e);
             Toast.makeText(this, "ARCore is not available", Toast.LENGTH_LONG).show();
             finish();
+        }
+    }
+
+    private void loadCADModel() {
+        try {
+            // Load the CAD model file from the assets folder
+            InputStream inputStream = getAssets().open("radiusCollesFracture_hollow_right.obj"); // Path to your model file
+            CADModelLoader loader = new CADModelLoader();
+            loader.loadModel(inputStream);
+            inputStream.close();
+
+            // Get the loaded model data
+            List<Point3> modelVertices = loader.getVertices(); // Use these for further processing
+            List<Point3> modelNormals = loader.getNormals();   // Use normals for feature extraction
+            List<int[]> modelFaces = loader.getFaces();        // Use faces for constructing mesh
+
+            // Example log to show successful loading
+            Log.i(TAG, "Model loaded with " + modelVertices.size() + " vertices, " +
+                    modelNormals.size() + " normals, and " + modelFaces.size() + " faces.");
+
+        } catch (IOException e) {
+            Log.e(TAG, "Failed to load the CAD model.", e);
+            Toast.makeText(this, "Error loading model file", Toast.LENGTH_LONG).show();
         }
     }
 

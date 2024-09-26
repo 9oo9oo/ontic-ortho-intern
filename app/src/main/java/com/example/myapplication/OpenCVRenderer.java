@@ -1,6 +1,7 @@
 package com.example.myapplication;
 
 import android.opengl.GLES32;
+import android.opengl.Matrix;
 import android.util.Log;
 
 import com.google.ar.core.ImageFormat;
@@ -9,17 +10,21 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import android.media.Image;
 
+import org.opencv.core.CvException;
 import org.opencv.core.CvType;
 import org.opencv.core.KeyPoint;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfKeyPoint;
 import org.opencv.core.Point;
 import org.opencv.core.Size;
+import org.opencv.features2d.Feature2D;
 import org.opencv.features2d.ORB;
+import org.opencv.imgproc.CLAHE;
 import org.opencv.imgproc.Imgproc;
 
 public class OpenCVRenderer {
@@ -85,7 +90,7 @@ public class OpenCVRenderer {
         Imgproc.GaussianBlur(matImage, matImage, new Size(5, 5), 0);
 
         MatOfKeyPoint keyPoints = new MatOfKeyPoint();
-        ORB orbDetector = ORB.create(2000);
+        ORB orbDetector = ORB.create(5000);
         orbDetector.detect(matImage, keyPoints);
 
         opencvFeaturePoints.clear();
@@ -97,6 +102,91 @@ public class OpenCVRenderer {
         Log.i(TAG, "Number of detected OpenCV keypoints: " + opencvFeaturePoints.size());
         return opencvFeaturePoints;
     }
+
+//    public List<Point> processOpenCV(Mat matImage) {
+//        // Step 1: Validate Input Image
+//        if (matImage.empty()) {
+//            Log.e(TAG, "Input image is empty.");
+//            return Collections.emptyList();
+//        }
+//
+//        // Step 2: Convert to Grayscale if Necessary
+//        Mat grayImage = new Mat();
+//        if (matImage.channels() > 1) {
+//            Imgproc.cvtColor(matImage, grayImage, Imgproc.COLOR_BGR2GRAY);
+//        } else {
+//            grayImage = matImage.clone();
+//        }
+//
+//        // Step 3: Apply CLAHE for Contrast Enhancement
+//        Mat claheImage = new Mat();
+//        CLAHE clahe = Imgproc.createCLAHE();
+//        clahe.setClipLimit(2.0);
+//        clahe.apply(grayImage, claheImage);
+//
+//        // Step 4: Apply Bilateral Filter for Edge-Preserving Noise Reduction
+//        Mat bilateralImage = new Mat();
+//        try {
+//            Imgproc.bilateralFilter(claheImage, bilateralImage, 9, 75, 75);
+//        } catch (CvException e) {
+//            Log.e(TAG, "Bilateral Filter failed: " + e.getMessage());
+//            return Collections.emptyList();
+//        }
+//
+//        // Step 5: Apply Sharpening Filter
+//        Mat sharpenedImage = new Mat();
+//        Mat kernel = new Mat(3, 3, CvType.CV_32F) {
+//            {
+//                put(0, 0, 0, -1, 0);
+//                put(1, 0, -1, 5, -1);
+//                put(2, 0, 0, -1, 0);
+//            }
+//        };
+//        Imgproc.filter2D(bilateralImage, sharpenedImage, bilateralImage.depth(), kernel);
+//
+//        // Step 6: Initialize Feature Detector (ORB in this Example)
+//        ORB orbDetector = ORB.create(
+//                10000,    // nFeatures
+//                1.2f,     // scaleFactor
+//                8,        // nLevels
+//                31,       // edgeThreshold
+//                0,        // firstLevel
+//                2,        // WTA_K
+//                ORB.HARRIS_SCORE, // scoreType
+//                31        // patchSize
+//        );
+//        MatOfKeyPoint keyPoints = new MatOfKeyPoint();
+//        orbDetector.detect(sharpenedImage, keyPoints);
+//
+//        // Step 7: Remove Duplicate or Nearby Keypoints
+//        List<KeyPoint> filteredKeypoints = removeDuplicates(keyPoints.toList(), 10.0);
+//        opencvFeaturePoints.clear();
+//        for (KeyPoint kp : filteredKeypoints) {
+//            opencvFeaturePoints.add(new Point(kp.pt.x, kp.pt.y));
+//        }
+//
+//        Log.i(TAG, "Number of detected OpenCV keypoints: " + opencvFeaturePoints.size());
+//        return opencvFeaturePoints;
+//    }
+//
+//    // Helper method to remove nearby keypoints
+//    private List<KeyPoint> removeDuplicates(List<KeyPoint> keypoints, double minDistance) {
+//        List<KeyPoint> filtered = new ArrayList<>();
+//        for (KeyPoint kp : keypoints) {
+//            boolean tooClose = false;
+//            for (KeyPoint existing : filtered) {
+//                double distance = Math.hypot(kp.pt.x - existing.pt.x, kp.pt.y - existing.pt.y);
+//                if (distance < minDistance) {
+//                    tooClose = true;
+//                    break;
+//                }
+//            }
+//            if (!tooClose) {
+//                filtered.add(kp);
+//            }
+//        }
+//        return filtered;
+//    }
 
     public void renderOpenCV(int imageWidth, int imageHeight) {
         GLES32.glUseProgram(featurePointShaderProgram.getProgramId());
@@ -129,9 +219,8 @@ public class OpenCVRenderer {
     }
 
     public float[] convertToOpenGLCoords(Point point, int imageWidth, int imageHeight) {
-        float glX = (float) (point.y / imageHeight) * 2.0f - 1.0f;
-        float glY = 1.0f - (float) (point.x / imageWidth) * 2.0f;
-
+        float glX = ((float) point.y / imageHeight) * 2.0f - 1.0f;
+        float glY = (1.0f - ((float) point.x / imageWidth) * 2.0f);
         return new float[]{-glX, glY};
     }
 }

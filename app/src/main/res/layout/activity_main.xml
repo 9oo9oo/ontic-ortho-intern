@@ -9,4 +9,12 @@
         android:layout_height="match_parent"
         android:layout_gravity="top"/>
 
+    <Button
+        android:id="@+id/compute_button"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Compute Match"
+        android:layout_alignParentBottom="true"
+        android:layout_centerHorizontal="true"/>
+
 </RelativeLayout >
