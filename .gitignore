@@ -52,3 +52,7 @@ Thumbs.db
 /models/*.stl
 /models/*.obj
 
+# ignore everything under OpenCV build and native libs
+/opencv/build/
+/opencv/native/
+
