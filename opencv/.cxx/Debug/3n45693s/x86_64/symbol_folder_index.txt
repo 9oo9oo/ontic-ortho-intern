@@ -1,0 +1,1 @@
+C:\Users\jinhy\AndroidStudioProjects\MyApplication\opencv\build\intermediates\cxx\Debug\3n45693s\obj\x86_64

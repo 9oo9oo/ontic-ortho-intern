@@ -1,3 +1,6 @@
+> ⚠️ **NDA Notice:**  
+> The original 3D CAD model used for development is proprietary and has been omitted from this repository under a non-disclosure agreement. To run this code, you must supply your own 3D model in OBJ  format.
+
 ## Overview
 
 This application is an Android application designed to scan the physical model of the bone and compare them to its identical .obj file. 

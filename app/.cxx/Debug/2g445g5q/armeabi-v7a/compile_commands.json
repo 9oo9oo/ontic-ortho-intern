@@ -1,0 +1,8 @@
+[
+{
+  "directory": "C:/Users/jinhy/AndroidStudioProjects/MyApplication/app/.cxx/Debug/2g445g5q/armeabi-v7a",
+  "command": "C:\\Users\\jinhy\\AppData\\Local\\Android\\Sdk\\ndk\\26.1.10909125\\toolchains\\llvm\\prebuilt\\windows-x86_64\\bin\\clang++.exe --target=armv7-none-linux-androideabi21 --sysroot=C:/Users/jinhy/AppData/Local/Android/Sdk/ndk/26.1.10909125/toolchains/llvm/prebuilt/windows-x86_64/sysroot -Dnative_lib_EXPORTS -IC:/Users/jinhy/AndroidStudioProjects/MyApplication/app/src/main/cpp/../include/pcl -IC:/Users/jinhy/AndroidStudioProjects/MyApplication/app/src/main/cpp/../include/boost -IC:/Users/jinhy/AndroidStudioProjects/MyApplication/app/src/main/cpp/../include/flann -IC:/Users/jinhy/AndroidStudioProjects/MyApplication/app/src/main/cpp/../include/lz4 -g -DANDROID -fdata-sections -ffunction-sections -funwind-tables -fstack-protector-strong -no-canonical-prefixes -D_FORTIFY_SOURCE=2 -march=armv7-a -mthumb -Wformat -Werror=format-security  -std=c++14 -IC:\\Users\\jinhy\\AndroidStudioProjects\\MyApplication\\app/src/main/include -fopenmp=libomp -fno-limit-debug-info  -std=gnu++14 -fPIC -o CMakeFiles\\native-lib.dir\\native-lib.cpp.o -c C:\\Users\\jinhy\\AndroidStudioProjects\\MyApplication\\app\\src\\main\\cpp\\native-lib.cpp",
+  "file": "C:\\Users\\jinhy\\AndroidStudioProjects\\MyApplication\\app\\src\\main\\cpp\\native-lib.cpp",
+  "output": "CMakeFiles\\native-lib.dir\\native-lib.cpp.o"
+}
+]

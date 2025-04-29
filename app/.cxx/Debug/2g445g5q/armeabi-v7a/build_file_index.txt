@@ -1,0 +1,1 @@
+C:\Users\jinhy\AndroidStudioProjects\MyApplication\app\src\main\cpp\CMakeLists.txt

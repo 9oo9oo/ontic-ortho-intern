@@ -1,0 +1,3 @@
+C:/Users/jinhy/AndroidStudioProjects/MyApplication/app/.cxx/Debug/2g445g5q/armeabi-v7a/CMakeFiles/native-lib.dir
+C:/Users/jinhy/AndroidStudioProjects/MyApplication/app/.cxx/Debug/2g445g5q/armeabi-v7a/CMakeFiles/edit_cache.dir
+C:/Users/jinhy/AndroidStudioProjects/MyApplication/app/.cxx/Debug/2g445g5q/armeabi-v7a/CMakeFiles/rebuild_cache.dir

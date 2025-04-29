@@ -1,0 +1,3 @@
+C:/Users/jinhy/AndroidStudioProjects/MyApplication/opencv/.cxx/Debug/2x6o6m4f/arm64-v8a/CMakeFiles/opencv_jni_shared.dir
+C:/Users/jinhy/AndroidStudioProjects/MyApplication/opencv/.cxx/Debug/2x6o6m4f/arm64-v8a/CMakeFiles/edit_cache.dir
+C:/Users/jinhy/AndroidStudioProjects/MyApplication/opencv/.cxx/Debug/2x6o6m4f/arm64-v8a/CMakeFiles/rebuild_cache.dir
