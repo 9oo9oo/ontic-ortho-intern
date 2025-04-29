@@ -48,8 +48,6 @@ Thumbs.db
 *.mov
 *.wmv
 
-# ignore all models
-/models/*.stl
-/models/*.obj
+
 
 
